@@ -10,6 +10,13 @@ chromedriver.log
 # Created by https://www.gitignore.io/api/python
 # Edit at https://www.gitignore.io/?templates=python
 
+# Docker-specific entries
+data/
+.env
+*.pem
+*.key
+docker/*override.yml
+
 ### Python ###
 # Byte-compiled / optimized / DLL files
 __pycache__/
