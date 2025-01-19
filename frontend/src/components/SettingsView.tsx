@@ -19,14 +19,19 @@ const ProfileView = () => {
     const [wgGesuchtCredentials, setWgGesuchtCredentials] = useState({
         email: '',
         password: '',
-        status: 'disconnected' as 'connected' | 'disconnected'
+        status: 'disconnected' as 'connected' | 'disconnected',
     });
 
-    const [openAiKey, setOpenAiKey] = useState({
+    const [openAiKey, setOpenAiKey] = useState<{
+        key: string;
+        status: boolean;
+        balance: string | null; // Allow string and null
+        error: string | null;   // Allow string and null for errors
+    }>({
         key: '',
         status: false,
         balance: null,
-        error: null
+        error: null,
     });
 
     const [showPassword, setShowPassword] = useState(false);
@@ -35,26 +40,32 @@ const ProfileView = () => {
     const [notificationSettings, setNotificationSettings] = useState({
         email: '',
         emailEnabled: false,
-        telegramEnabled: false
+        telegramEnabled: false,
     });
 
     const handleWgGesuchtConnect = () => {
-        // Here you would handle the actual authentication
+        // Handle authentication
         if (wgGesuchtCredentials.email && wgGesuchtCredentials.password) {
-            setWgGesuchtCredentials(prev => ({
+            setWgGesuchtCredentials((prev) => ({
                 ...prev,
-                status: 'connected'
+                status: 'connected',
             }));
         }
     };
 
     const handleOpenAiConnect = () => {
-        // Here you would validate the API key
+        // Validate the API key and set balance
         if (openAiKey.key) {
-            setOpenAiKey(prev => ({
+            setOpenAiKey((prev) => ({
                 ...prev,
                 status: true,
-                balance: '25.00' // This would come from the API
+                balance: '25.00', // Replace with dynamic value from API
+                error: null,      // Reset error on success
+            }));
+        } else {
+            setOpenAiKey((prev) => ({
+                ...prev,
+                error: 'Invalid API key', // Handle invalid key scenario
             }));
         }
     };

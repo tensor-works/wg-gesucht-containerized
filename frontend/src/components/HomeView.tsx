@@ -34,18 +34,6 @@ const HomeView: React.FC<HomeViewProps> = ({ listings, setListings }) => {
                 <CardHeader>
                     <CardTitle className="text-xl font-bold">WG-Gesucht Bot Development UI</CardTitle>
                 </CardHeader>
-                <CardContent>
-                    <div className="flex gap-4">
-                        <Button className="flex items-center gap-2">
-                            <Settings size={16} />
-                            Load Config
-                        </Button>
-                        <Button className="flex items-center gap-2">
-                            <Eye size={16} />
-                            Fetch Listings
-                        </Button>
-                    </div>
-                </CardContent>
             </Card>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

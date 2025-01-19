@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Routes, Route } from 'react-router-dom';
 import Navbar from './components/Navbar';
 import HomeView from './components/HomeView';
@@ -7,24 +7,10 @@ import SettingsView from './components/SettingsView';
 import TemplatesView from './components/TemplatesView';
 import AutomateListView from './components/AutomateView';
 import AutomateSubpage from './components/AutomateSubpage';
-
-interface ListingData {
-  ref: string;
-  user_name: string;
-  address: string;
-  wg_type: string;
-  rental_length_months: number;
-  rental_start: Date;
-  listingText: string;
-  gptResponse: {
-    language: string;
-    keyword: string;
-    message: string;
-  };
-}
+import { ListingData } from './types/ListingTypes';
 
 const MainLayout: React.FC = () => {
-  const [listings, setListings] = React.useState<ListingData[]>([
+  const [listings, setListings] = useState<ListingData[]>([
     {
       ref: '/wg-zimmer-in-Berlin-Mitte.123.html',
       user_name: 'John Doe',
@@ -46,12 +32,11 @@ const MainLayout: React.FC = () => {
       <Navbar />
       <div className="max-w-7xl mx-auto p-6">
         <Routes>
-          {/* Route Definitions */}
           <Route
             path="/"
             element={<HomeView listings={listings} setListings={setListings} />}
           />
-          <Route path="/search" element={<SearchView />} />
+          <Route path="/search/*" element={<SearchView />} />
           <Route path="/automate" element={<AutomateListView />} />
           <Route path="/automate/:searchId" element={<AutomateSubpage />} />
           <Route path="/templates" element={<TemplatesView />} />
