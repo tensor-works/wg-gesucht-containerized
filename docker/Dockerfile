@@ -56,7 +56,7 @@ RUN cd frontend && \
     npm install && \
     npm run build && \
     npx shadcn@latest init --defaults -f && \
-    npx shadcn@latest add card tabs button alert input badge textarea select
+    npx shadcn@latest add card tabs button alert input badge textarea select checkbox label
 
 # Create directory for persistent data
 RUN mkdir -p /app/data

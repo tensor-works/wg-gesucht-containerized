@@ -1,0 +1,35 @@
+{
+    "name": "WG Bot Development",
+    "build": {
+        "dockerfile": "../docker/Dockerfile",
+        "context": "..",
+        "args": {
+            "WORKDIR_PATH": "/workspaces/wg-gesucht-containerized"
+        }
+    },
+    "workspaceFolder": "/workspaces/wg-gesucht-containerized",
+    "features": {
+        "ghcr.io/devcontainers/features/git:1": {}
+    },
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "ms-python.python",
+                "ms-python.vscode-pylance",
+                "ms-azuretools.vscode-docker",
+                "ms-vscode.vscode-typescript-next",
+                "ritwickdey.liveserver"
+            ]
+        }
+    },
+    "postCreateCommand": "pip install ipython",
+    "remoteUser": "root",
+    "appPort": [
+        3000,
+        5000
+    ],
+    "forwardPorts": [
+        3000,
+        5000
+    ]
+}

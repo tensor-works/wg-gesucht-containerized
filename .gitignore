@@ -127,6 +127,6 @@ dmypy.json
 message.txt
 
 # login credentials
-*.json
+# *.json
 
 # End of https://www.gitignore.io/api/python
