@@ -1,0 +1,15 @@
+selenium~=4.9.1
+playwright
+openai
+pyyaml
+beautifulsoup4
+requests
+lxml
+pytest
+python-dotenv
+fastapi 
+uvicorn 
+python-multipart 
+cryptography 
+requests
+yapf

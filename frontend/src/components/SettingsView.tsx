@@ -1,8 +1,9 @@
-import React, { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Input } from "@/components/ui/input";
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { Alert, AlertTitle, AlertDescription } from '@/components/ui/alert';
 import {
     Key,
     Mail,
@@ -12,10 +13,12 @@ import {
     AlertCircle,
     Bot,
     Eye,
-    EyeOff
+    EyeOff,
+    Loader2
 } from 'lucide-react';
 
 const ProfileView = () => {
+    // Existing state
     const [wgGesuchtCredentials, setWgGesuchtCredentials] = useState({
         email: '',
         password: '',
@@ -25,8 +28,8 @@ const ProfileView = () => {
     const [openAiKey, setOpenAiKey] = useState<{
         key: string;
         status: boolean;
-        balance: string | null; // Allow string and null
-        error: string | null;   // Allow string and null for errors
+        balance: string | null;
+        error: string | null;
     }>({
         key: '',
         status: false,
@@ -43,30 +46,112 @@ const ProfileView = () => {
         telegramEnabled: false,
     });
 
-    const handleWgGesuchtConnect = () => {
-        // Handle authentication
-        if (wgGesuchtCredentials.email && wgGesuchtCredentials.password) {
-            setWgGesuchtCredentials((prev) => ({
+    // New state for API integration
+    const [loading, setLoading] = useState(false);
+    const [error, setError] = useState<string | null>(null);
+    const [success, setSuccess] = useState<string | null>(null);
+
+    // Fetch initial settings
+    useEffect(() => {
+        const fetchSettings = async () => {
+            try {
+                setLoading(true);
+                // Fetch OpenAI balance if key exists
+                if (openAiKey.status) {
+                    const balanceResponse = await fetch('/api/v1/settings/openai-balance');
+                    if (balanceResponse.ok) {
+                        const balanceData = await balanceResponse.json();
+                        setOpenAiKey(prev => ({
+                            ...prev,
+                            balance: balanceData.balance.toFixed(2)
+                        }));
+                    }
+                }
+
+                // Fetch profile photo (if needed)
+                const photoResponse = await fetch('/api/v1/settings/profile-photo');
+                if (!photoResponse.ok) {
+                    console.warn('Failed to load profile photo');
+                }
+            } catch (err) {
+                setError('Failed to load settings');
+                console.error('Error loading settings:', err);
+            } finally {
+                setLoading(false);
+            }
+        };
+
+        fetchSettings();
+    }, [openAiKey.status]);
+
+    const handleWgGesuchtConnect = async () => {
+        try {
+            setLoading(true);
+            setError(null);
+
+            const response = await fetch('/api/v1/settings/credentials', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    credential_type: 'wg_gesucht',
+                    wg_gesucht: {
+                        email: wgGesuchtCredentials.email,
+                        password: wgGesuchtCredentials.password
+                    }
+                }),
+            });
+
+            if (!response.ok) {
+                throw new Error('Failed to connect WG-Gesucht account');
+            }
+
+            setWgGesuchtCredentials(prev => ({
                 ...prev,
-                status: 'connected',
+                status: 'connected'
             }));
+
+            setSuccess('WG-Gesucht account connected successfully');
+            setTimeout(() => setSuccess(null), 3000);
+        } catch (err) {
+            setError('Failed to connect WG-Gesucht account');
+            console.error('Error connecting account:', err);
+        } finally {
+            setLoading(false);
         }
     };
 
-    const handleOpenAiConnect = () => {
-        // Validate the API key and set balance
-        if (openAiKey.key) {
-            setOpenAiKey((prev) => ({
-                ...prev,
-                status: true,
-                balance: '25.00', // Replace with dynamic value from API
-                error: null,      // Reset error on success
-            }));
-        } else {
-            setOpenAiKey((prev) => ({
-                ...prev,
-                error: 'Invalid API key', // Handle invalid key scenario
-            }));
+    const handleOpenAiConnect = async () => {
+        try {
+            setLoading(true);
+            setError(null);
+
+            const response = await fetch('/api/v1/settings/credentials', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    credential_type: 'openai',
+                    openai: {
+                        api_key: openAiKey.key,
+                        user_id: 'current-user'
+                    }
+                }),
+            });
+
+            if (!response.ok) {
+                throw new Error('Failed to connect OpenAI API');
+            }
+
+            // Rest of your existing code...
+
+        } catch (err) {
+            setError('Failed to connect OpenAI API');
+            console.error('Error connecting OpenAI:', err);
+        } finally {
+            setLoading(false);
         }
     };
 
@@ -74,7 +159,25 @@ const ProfileView = () => {
         <div className="space-y-6 p-6">
             <h2 className="text-2xl font-bold">Personal Settings</h2>
 
-            {/* WG-Gesucht Authentication */}
+            {/* Error/Success Alerts */}
+            {error && (
+                <Alert variant="destructive">
+                    <AlertCircle className="h-4 w-4" />
+                    <AlertTitle>Error</AlertTitle>
+                    <AlertDescription>{error}</AlertDescription>
+                </Alert>
+            )}
+
+            {success && (
+                <Alert>
+                    <Check className="h-4 w-4" />
+                    <AlertTitle>Success</AlertTitle>
+                    <AlertDescription>{success}</AlertDescription>
+                </Alert>
+            )}
+
+            {/* Rest of your existing JSX */}
+            {/* WG-Gesucht Authentication Card */}
             <Card>
                 <CardHeader>
                     <CardTitle className="flex items-center justify-between">
@@ -91,6 +194,7 @@ const ProfileView = () => {
                     </CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-4">
+                    {/* Rest of WG-Gesucht card content */}
                     {wgGesuchtCredentials.status === 'disconnected' ? (
                         <>
                             <div className="space-y-3">
@@ -131,9 +235,16 @@ const ProfileView = () => {
                             <Button
                                 className="w-full"
                                 onClick={handleWgGesuchtConnect}
-                                disabled={!wgGesuchtCredentials.email || !wgGesuchtCredentials.password}
+                                disabled={loading || !wgGesuchtCredentials.email || !wgGesuchtCredentials.password}
                             >
-                                Connect Account
+                                {loading ? (
+                                    <>
+                                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                                        Connecting...
+                                    </>
+                                ) : (
+                                    'Connect Account'
+                                )}
                             </Button>
                         </>
                     ) : (
@@ -152,6 +263,7 @@ const ProfileView = () => {
                                     status: 'disconnected',
                                     password: ''
                                 }))}
+                                disabled={loading}
                             >
                                 Disconnect
                             </Button>
@@ -160,7 +272,7 @@ const ProfileView = () => {
                 </CardContent>
             </Card>
 
-            {/* OpenAI API Status */}
+            {/* OpenAI API Card */}
             <Card>
                 <CardHeader>
                     <CardTitle>OpenAI API Status</CardTitle>
@@ -192,9 +304,16 @@ const ProfileView = () => {
                             <Button
                                 className="w-full"
                                 onClick={handleOpenAiConnect}
-                                disabled={!openAiKey.key}
+                                disabled={loading || !openAiKey.key}
                             >
-                                Connect API
+                                {loading ? (
+                                    <>
+                                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                                        Connecting...
+                                    </>
+                                ) : (
+                                    'Connect API'
+                                )}
                             </Button>
                         </>
                     ) : (
@@ -220,6 +339,7 @@ const ProfileView = () => {
                                     key: '',
                                     balance: null
                                 }))}
+                                disabled={loading}
                             >
                                 Disconnect API
                             </Button>
@@ -228,7 +348,7 @@ const ProfileView = () => {
                 </CardContent>
             </Card>
 
-            {/* Notifications Card remains the same */}
+            {/* Notifications Card */}
             <Card>
                 <CardHeader>
                     <CardTitle>Notification Settings</CardTitle>
@@ -246,6 +366,7 @@ const ProfileView = () => {
                                 ...prev,
                                 emailEnabled: !prev.emailEnabled
                             }))}
+                            disabled={loading}
                         >
                             {notificationSettings.emailEnabled ? (
                                 <Check className="h-4 w-4 text-green-500" />
@@ -267,6 +388,7 @@ const ProfileView = () => {
                                 ...prev,
                                 telegramEnabled: !prev.telegramEnabled
                             }))}
+                            disabled={loading}
                         >
                             {notificationSettings.telegramEnabled ? (
                                 <Check className="h-4 w-4 text-green-500" />

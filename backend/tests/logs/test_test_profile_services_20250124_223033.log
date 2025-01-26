@@ -1,0 +1,4 @@
+2025-01-24 22:30:36,509 - test_browser_manager.test_profile_services - INFO - Testing service initialization
+2025-01-24 22:30:49,634 - test_browser_manager.test_profile_services - INFO - Testing profile photo retrieval
+2025-01-24 22:30:52,310 - test_browser_manager.test_profile_services - INFO - Successfully retrieved photo URL: https://img.wg-gesucht.de/media/up/2021/23/b5dddd7f748026448d9035a138197c160ee9fa3a1716a81c05ac932bbe63bc63_kyoto_deer.sized.JPG
+2025-01-24 22:30:52,755 - test_browser_manager.test_profile_services - INFO - Testing credential encryption

@@ -51,37 +51,21 @@ RUN pip install --no-cache-dir -r requirements.txt && \
 # Copy application code
 COPY . .
 
-# Build the frontend
-RUN cd frontend && \
-    npm install && \
-    npm run build && \
-    npx shadcn@latest init --defaults -f && \
-    npx shadcn@latest add card tabs button alert input badge textarea select checkbox label
+# Copy the existing entrypoint.sh script from the etc directory
+COPY etc/entrypoint.sh /etc/entrypoint.sh
 
-# Create directory for persistent data
-RUN mkdir -p /app/data
-
-# Set environment variables
-ENV PYTHONUNBUFFERED=1
-ENV DISPLAY=:99
-ENV PYTHONPATH="${PYTHONPATH}:/workspaces/wg-gesucht-containerized/src"
-ENV WORKDIR=${WORKDIR_PATH}
-ENV NODE_ENV=production
-
-# Create and configure entrypoint script
-RUN echo '#!/bin/bash\n\
-    mkdir -p /app/data\n\
-    cd /app\n\
-    # Start the frontend development server in the background\n\
-    if [ "$NODE_ENV" = "development" ]; then\n\
-    cd frontend && npm run dev & cd ..\n\
-    fi\n\
-    # Start the Python application\n\
-    python wg-gesucht.py' > /app/entrypoint.sh && \
-    chmod +x /app/entrypoint.sh
+# Ensure the entrypoint script is executable
+RUN chmod +x /etc/entrypoint.sh
 
 # Expose ports for both backend and frontend
 EXPOSE 5000 3000
 
+# Set environment variables
+ENV PYTHONUNBUFFERED=1
+ENV DISPLAY=:99
+ENV PYTHONPATH="${PYTHONPATH}:/workspaces/wg-gesucht-containerized/backend/src:/workspaces/wg-gesucht-containerized/backend/"
+ENV WORKDIR=${WORKDIR_PATH}
+ENV NODE_ENV=production
+
 # Set the entrypoint
-ENTRYPOINT ["/app/entrypoint.sh"]
+ENTRYPOINT ["/etc/entrypoint.sh"]

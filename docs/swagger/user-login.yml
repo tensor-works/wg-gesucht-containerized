@@ -1,0 +1,29 @@
+/auth/login:
+  post:
+    summary: User Login
+    requestBody:
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              email:
+                type: string
+              password:
+                type: string
+    responses:
+      '200':
+        description: Successful login
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                user_id:
+                  type: string
+                session_token:
+                  type: string
+                username:
+                  type: string
+      '400':
+        description: Bad request

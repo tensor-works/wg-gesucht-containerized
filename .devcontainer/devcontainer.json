@@ -22,7 +22,9 @@
             ]
         }
     },
-    "postCreateCommand": "pip install ipython",
+    "onCreateCommand": {
+        "init": "exec /etc/entrypoint.sh"
+    },
     "remoteUser": "root",
     "appPort": [
         3000,

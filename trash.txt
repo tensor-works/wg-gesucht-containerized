@@ -1,0 +1,106 @@
+classDiagram
+    class AuthService {
+        +validate_session_token(session_token: str) bool
+        +get_user_id(session_token: str) str
+        +authenticate_wg_gesucht(email: str, password: str) dict
+        +authenticate_openai(api_key: str) bool
+        +store_credentials(user_id: str, credentials: dict)
+        +fetch_credentials(user_id: str) dict
+    }
+
+    class BrowserManager {
+        +get_browser_for_user(user_id: str) BrowserWrapper
+    }
+
+    class BrowserWrapper {
+        +navigate_to(url: str)
+        +send_keys(by: By, id: str, value: str)
+        +click_button(by: By, id: str)
+        +get_element(by: By, id: str) WebElement
+    }
+
+    class KeyVault {
+        +store_credentials(user_id: str, credentials: dict)
+        +fetch_credentials(user_id: str) dict
+        +validate_token(session_token: str) bool
+    }
+
+    class Database {
+        +get_user_by_email(email: str) dict
+        +create_user(email: str, encrypted_password: str) str
+    }
+
+    AuthService --> BrowserManager : Uses for WG-Gesucht interactions
+    BrowserManager --> BrowserWrapper : Provides browser instances
+    AuthService --> KeyVault : Stores and retrieves credentials and tokens
+    AuthService --> Database : Reads/Writes user information
+    AuthService --> OpenAI : Sends API key validation requests
+
+
+
+classDiagram
+    class ProfileService {
+        +get_profile_photo(session_token: str) str
+        +get_profile_name(session_token: str) dict
+        +get_user_address(session_token: str) dict
+    }
+
+    class BrowserManager {
+        +get_browser_for_user(user_id: str) BrowserWrapper
+    }
+
+    class BrowserWrapper {
+        +navigate_to(url: str)
+        +get_element(by: By, id: str) WebElement
+        +get_attribute(element: WebElement, attribute: str) str
+    }
+
+    class AuthService {
+        +validate_session_token(session_token: str) bool
+        +get_user_id(session_token: str) str
+    }
+
+    ProfileService --> AuthService : Validates session and gets user_id
+    ProfileService --> BrowserManager : Fetches browser for WG-Gesucht interactions
+    BrowserManager --> BrowserWrapper : Provides browser instance
+
+
+
+classDiagram
+    class SearchService {
+        +create_search(session_token: str, search_config: dict) str
+        +update_search(session_token: str, search_id: str, search_config: dict) None
+        +delete_search(session_token: str, search_id: str) None
+        +retrieve_all_searches(session_token: str) list[dict]
+    }
+
+    class AuthService {
+        +validate_session_token(session_token: str) bool
+        +get_user_id(session_token: str) str
+    }
+
+    SearchService --> AuthService : Validates session and gets user_id
+    SearchService --> Database : Reads/Writes search configurations
+
+
+
+classDiagram
+    class SearchService {
+        +trigger_search(session_token: str, search_id: str) str
+        +poll_search_status(session_token: str) list[dict]
+        +fetch_search_results(session_token: str, search_id: str) dict
+        +toggle_search_activity(session_token: str, search_id: str) dict
+    }
+
+    class AuthService {
+        +validate_session_token(session_token: str) bool
+        +get_user_id(session_token: str) str
+    }
+
+    class BrowserManager {
+        +execute_search(user_id: str, search_config: dict) list[dict]
+    }
+
+    SearchService --> AuthService : Validates session and retrieves user_id
+    SearchService --> BrowserManager : Executes searches (optional)
+    SearchService --> Database : Reads/Writes search configurations and results
