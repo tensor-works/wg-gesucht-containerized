@@ -157,7 +157,14 @@ class AuthService:
 
     def _initialize_vault(self, vault_path: Path) -> Fernet:
         """
-        Validate a session token.
+        Initialize the encryption vault for a user.
+
+        This method ensures that a unique encryption key is generated and stored for each user.
+        If a key already exists in the vault file, it is loaded; otherwise, a new key is generated
+        and stored securely.
+
+        - The encryption key is essential for encrypting and decrypting sensitive user data.
+        - If the vault file is missing, a new key is created and saved to the file.
 
         Parameters
         ----------
@@ -179,7 +186,24 @@ class AuthService:
         return Fernet(key)
 
     def _save_to_vault(self, user_id: str, key: str, value: str):
+        """
+        Securely store a key-value pair in the user's encrypted vault.
 
+        This method encrypts and stores sensitive user data, such as passwords or API keys,
+        in an encrypted vault file specific to each user.
+
+        - The vault file is stored at a user-specific path.
+        - Only encrypted data is stored, ensuring security.
+        - This method overwrites existing data in the vault file.
+        Parameters
+        ----------
+        user_id : str
+            The unique identifier of the user.
+        key : str
+            The identifier for the credential being stored (e.g., "wg_password", "openai_key").
+        value : str
+            The sensitive data to be encrypted and saved.
+        """
         vault_path = self._get_vault_path(user_id)
         cipher = self._initialize_vault(vault_path)
 
@@ -189,7 +213,31 @@ class AuthService:
         vault_path.write_bytes(encrypted_data)
 
     def _load_from_vault(self, user_id: str, key: str) -> Optional[str]:
-        """Load a key-value pair from the user's key vault."""
+        """
+        Retrieve a key-value pair from the user's encrypted vault.
+
+        This method decrypts and retrieves user credentials or API keys securely stored
+        in the vault.
+        - If the vault does not exist or does not contain the requested key, returns None.
+        - Only trusted data should be stored and accessed in the vault to prevent security risks.
+
+        Parameters
+        ----------
+        user_id : str
+            The unique identifier of the user.
+        key : str
+            The identifier of the credential to retrieve.
+
+        Returns
+        -------
+        Optional[str]
+            The decrypted value if found, otherwise None.
+
+        Raises
+        ------
+        ValueError
+            If the decryption process fails or stored data is corrupted.
+        """
         vault_path = self._get_vault_path(user_id)
         cipher = self._initialize_vault(vault_path)
 
@@ -204,14 +252,36 @@ class AuthService:
         return data.get(key)
 
     def _get_vault_path(self, user_id: str) -> Path:
-        """Get the path to the user's key vault."""
+        """
+        Get the file path to the user's encrypted key vault.
+
+        This method ensures that a secure storage location is created for each user
+        before returning the vault path.
+        - The vault file is stored at `data/users/{user_id}/key_vault.enc`.
+        - If the user's directory does not exist, it is created automatically.
+
+        Parameters
+        ----------
+        user_id : str
+            The unique identifier of the user.
+
+        Returns
+        -------
+        Path
+            The file path to the user's encrypted vault.
+        """
         user_dir = Path(os.getenv("WORKINGDIR", "."), "data", "users", user_id)
         user_dir.mkdir(parents=True, exist_ok=True)
         return Path(user_dir, "key_vault.enc")
 
     def validate_session_token(self, session_token: str) -> bool:
         """
-        Validate a session token.
+        Validate a JWT session token.
+
+        This method decodes and verifies the session token to ensure it is valid and has not expired.
+
+        - If the token is valid, it returns `True`, allowing continued authentication.
+        - If the token is expired or invalid, it returns `False`.
 
         Parameters
         ----------
@@ -231,7 +301,12 @@ class AuthService:
 
     def get_user_id(self, session_token: str) -> str:
         """
-        Extract user_id from session token.
+        Extract the user ID from a session token.
+
+        This method decodes the JWT session token and extracts the `user_id` associated
+        with the session.
+
+        - If the token is invalid or expired, an HTTP exception is raised.
 
         Parameters
         ----------
@@ -359,7 +434,13 @@ class AuthService:
     async def authenticate_openai(self, session_token: str,
                                   credentials: OpenAICredentials) -> AuthResponse:
         """
-        Retrieve user's stored credentials.
+        Authenticate and securely store the OpenAI API key for a user.
+
+        This method validates the provided OpenAI API key by attempting an API request.
+        If successful, the key is securely stored in the user's vault.
+
+        - The OpenAI API key is verified before being stored to prevent invalid keys.
+        - The API key is stored only in the vault and never in the database for security.
 
         Parameters
         ----------
@@ -415,7 +496,32 @@ class AuthService:
             raise HTTPException(status_code=500, detail=str(e))
 
     def get_credentials(self, session_token: str) -> Dict[str, Any]:
-        """Retrieve user's credentials."""
+        """
+        Retrieve a user's credentials securely from the vault.
+
+        This method retrieves stored user credentials, such as WG-Gesucht passwords and OpenAI API keys,
+        by securely loading them from the encrypted vault. If any credentials are missing, an error is raised.
+
+        - If the user does not exist in the database, a `404 Not Found` error is returned.
+        - If credentials are missing in the vault, a `500 Internal Server Error` is raised.
+
+        Parameters
+        ----------
+        session_token : str
+            JWT session token for authentication.
+
+        Returns
+        -------
+        Dict[str, Any]
+            Dictionary containing user's credentials.
+
+        Raises
+        ------
+        HTTPException
+            - 401 Unauthorized: If the session token is invalid.
+            - 404 Not Found: If the user does not exist.
+            - 500 Internal Server Error: If credentials are missing or retrieval fails.
+        """
         try:
             # Extract user_id from the session token
             user_id = self.get_user_id(session_token)
@@ -431,19 +537,24 @@ class AuthService:
 
             # Retrieve WG-Gesucht password from the key vault
             wg_password = self._load_from_vault(user_id, "wg_password")
-            if wg_password:
-                credentials["wg_password"] = wg_password
-            else:
-                # Fallback to decrypting from database if not in the vault
-                credentials["wg_password"] = self._decrypt_data(user_data["wg_password"])
+            if wg_password is None:
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"WG-Gesucht password not found in vault for user ID: {user_id}",
+                )
 
             # Retrieve OpenAI API key from the key vault
             openai_key = self._load_from_vault(user_id, "openai_key")
-            if openai_key:
-                credentials["openai_key"] = openai_key
-            elif user_data.get("openai_key"):
-                # Fallback to decrypting from database if not in the vault
-                credentials["openai_key"] = self._decrypt_data(user_data["openai_key"])
+            if openai_key is None:
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"OpenAI API key not found in vault for user ID: {user_id}",
+                )
+
+            credentials.update({
+                "wg_password": wg_password,
+                "openai_key": openai_key,
+            })
 
             return credentials
 
