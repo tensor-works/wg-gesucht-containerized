@@ -18,7 +18,8 @@
                 "ms-python.vscode-pylance",
                 "ms-azuretools.vscode-docker",
                 "ms-vscode.vscode-typescript-next",
-                "ritwickdey.liveserver"
+                "ritwickdey.liveserver", 
+                "eeyore.yapf"
             ]
         }
     },
@@ -31,7 +32,7 @@
         5000
     ],
     "forwardPorts": [
-        3000,
+       3000,
         5000
     ]
 }

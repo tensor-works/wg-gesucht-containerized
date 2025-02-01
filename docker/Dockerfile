@@ -2,7 +2,7 @@
 FROM python:3.9-slim as builder
 ARG WORKDIR_PATH=/app
 
-# Install system dependencies and Node.js
+# Install system dependencies, PostgreSQL, and Node.js
 RUN apt-get update -qq -y && \
     apt-get install -y \
     libasound2 \
@@ -13,12 +13,11 @@ RUN apt-get update -qq -y && \
     wget \
     unzip \
     curl \
-    gnupg && \
-    # Add NodeSource repository
+    gnupg \
+    gettext-base \
+    postgresql postgresql-contrib && \
     curl -fsSL https://deb.nodesource.com/setup_18.x | bash - && \
-    # Install Node.js and npm
     apt-get install -y nodejs && \
-    # Clean up
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
@@ -47,6 +46,21 @@ WORKDIR /workspaces
 COPY docker/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt && \
     playwright install chromium
+
+# Set up PostgreSQL data directory for persistence
+RUN mkdir -p /workspaces/wg-gesucht-containerized/pgdata && \ 
+    chown postgres:postgres /workspaces/wg-gesucht-containerized/pgdata && \
+    chmod 700 /workspaces/wg-gesucht-containerized/pgdata
+
+USER postgres
+
+# Initialize PostgreSQL database cluster
+RUN /usr/lib/postgresql/15/bin/initdb -D /workspaces/wg-gesucht-containerized/pgdata
+
+# Configure PostgreSQL to use the persistent data directory
+RUN echo "data_directory = '/workspaces/wg-gesucht-containerized/pgdata'" >> /etc/postgresql/15/main/postgresql.conf
+
+USER root
 
 # Copy application code
 COPY . .

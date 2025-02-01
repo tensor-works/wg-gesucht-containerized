@@ -13,3 +13,6 @@ python-multipart
 cryptography 
 requests
 yapf
+psycopg2-binary
+PyJWT
+pydantic[email]
