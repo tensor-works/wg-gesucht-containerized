@@ -19,13 +19,11 @@ def credentials() -> Dict[str, str]:
 @pytest.fixture(scope="session")
 def db_config(credentials: Dict[str, str]) -> DBConfig:
     """Fixture to create database configuration."""
-    return DBConfig(
-        host="localhost",
-        port=5432,
-        database="postgres",
-        user=credentials["user"],
-        password=credentials["password"]
-    )
+    return DBConfig(host="localhost",
+                    port=5432,
+                    database="postgres",
+                    user=credentials["user"],
+                    password=credentials["password"],)
 
 @pytest.fixture(scope="session")
 def db_service(db_config: DBConfig) -> DatabaseService:
@@ -61,11 +59,11 @@ def test_insert_user(db_service: DatabaseService, clean_users_table):
         "email": "test@example.com",
         "created_at": datetime.now()
     }
-    
+
     result = db_service.insert("users", user_data)
     assert result["success"] is True
     assert result["affected_rows"] == 1
-    
+
     # Verify insertion
     select_result = db_service.select("users", "email = 'test@example.com'")
     assert select_result["success"] is True
@@ -82,11 +80,11 @@ def test_insert_duplicate_email(db_service: DatabaseService, clean_users_table):
         "email": "test@example.com",
         "created_at": datetime.now()
     }
-    
+
     # First insert should succeed
     result1 = db_service.insert("users", user_data)
     assert result1["success"] is True
-    
+
     # Second insert with same email should fail
     result2 = db_service.insert("users", user_data)
     assert result2["success"] is False
@@ -111,21 +109,21 @@ def test_select_users(db_service: DatabaseService, clean_users_table):
             "created_at": datetime.now()
         }
     ]
-    
+
     for user in users:
         db_service.insert("users", user)
-    
+
     # Test selecting all users
     result = db_service.select("users")
     assert result["success"] is True
     assert len(result["data"]) == 2
-    
+
     # Test selecting with condition
     result = db_service.select("users", "email LIKE '%john%'")
     assert result["success"] is True
     assert len(result["data"]) == 1
     assert result["data"][0]["email"] == "john@example.com"
-    
+
     # Test selecting specific fields
     result = db_service.select("users", fields=["email", "name"])
     assert result["success"] is True
@@ -144,7 +142,7 @@ def test_update_user(db_service: DatabaseService, clean_users_table):
         "created_at": datetime.now()
     }
     db_service.insert("users", user_data)
-    
+
     # Update user
     update_data = {
         "name": "Updated",
@@ -153,7 +151,7 @@ def test_update_user(db_service: DatabaseService, clean_users_table):
     result = db_service.update("users", update_data, "email = 'test@example.com'")
     assert result["success"] is True
     assert result["affected_rows"] == 1
-    
+
     # Verify update
     select_result = db_service.select("users", "email = 'test@example.com'")
     assert select_result["success"] is True
@@ -172,12 +170,12 @@ def test_delete_user(db_service: DatabaseService, clean_users_table):
         "created_at": datetime.now()
     }
     db_service.insert("users", user_data)
-    
+
     # Delete user
     result = db_service.delete("users", "email = 'test@example.com'")
     assert result["success"] is True
     assert result["affected_rows"] == 1
-    
+
     # Verify deletion
     select_result = db_service.select("users", "email = 'test@example.com'")
     assert select_result["success"] is True
@@ -201,11 +199,11 @@ def test_bulk_insert(db_service: DatabaseService, clean_users_table):
             "created_at": datetime.now()
         }
     ]
-    
+
     result = db_service.bulk_insert("users", users)
     assert result["success"] is True
     assert result["affected_rows"] == 2
-    
+
     # Verify bulk insertion
     select_result = db_service.select("users")
     assert select_result["success"] is True
@@ -223,7 +221,7 @@ def test_database_startup(credentials: Dict[str, str]):
         user=credentials["user"],
         password=credentials["password"]
     )
-    
+
     try:
         # Should start database if it's down
         db = DatabaseService(config)
@@ -241,12 +239,12 @@ def test_error_handling(db_service: DatabaseService):
     result = db_service.select("nonexistent_table")
     assert result["success"] is False
     assert "does not exist" in result["error"]
-    
+
     # Test invalid SQL syntax
     result = db_service.execute_query("INVALID SQL")
     assert result["success"] is False
     assert "syntax error" in result["error"]
-    
+
     # Test invalid column name
     result = db_service.insert("users", {"invalid_column": "value"})
     assert result["success"] is False
