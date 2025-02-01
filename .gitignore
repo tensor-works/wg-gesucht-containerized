@@ -127,3 +127,4 @@ message.txt
 
 # End of https://www.gitignore.io/api/python
 /logs
+/pgdata
