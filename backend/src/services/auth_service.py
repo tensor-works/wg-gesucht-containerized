@@ -37,12 +37,15 @@ from pydantic import BaseModel, EmailStr
 from cryptography.fernet import Fernet
 from typing import Optional, Dict, Any
 from datetime import datetime, timedelta
+from openai import OpenAI
 import jwt
 import secrets
 import os
-import openai
+import requests
+import json
+from clients.database_client import DatabaseClient
 from pathlib import Path
-from services.database_service import DatabaseService, DBConfig
+from utils import getenv
 from utils.browser_manager import BrowserManager
 
 
@@ -71,40 +74,143 @@ class AuthResponse(BaseModel):
     session_token: Optional[str] = None
 
 
+class UserVault:
+    """Handles secure storage and retrieval of user secrets."""
+
+    def __init__(self, user_id: str, base_dir: Optional[str] = None):
+        """
+        Initialize the user's vault system.
+        
+        Parameters
+        ----------
+        user_id : str
+            The unique identifier for the user
+        base_dir : str, optional
+            Base directory for storing vault files
+        """
+        self.user_id = user_id
+        self.base_dir = Path(base_dir or getenv("WORKDIR"))
+        self.user_dir = Path(self.base_dir, "data", "users", user_id, "vault")
+        self.user_dir.mkdir(parents=True, exist_ok=True)
+
+        # Initialize or load the master key
+        self._master_key = self._initialize_master_key()
+        self._cipher = Fernet(self._master_key)
+
+    def _initialize_master_key(self) -> bytes:
+        """Initialize or load the master encryption key."""
+        key_path = Path(self.user_dir, "master.key")
+
+        if not key_path.exists():
+            key = Fernet.generate_key()
+            key_path.write_bytes(key)
+            return key
+
+        return key_path.read_bytes()
+
+    def _get_secret_path(self, secret_type: str) -> Path:
+        """Get path for a specific type of secret."""
+        return Path(self.user_dir, f"{secret_type}.enc")
+
+    def store_secret(self, secret_type: str, secret_data: Any) -> None:
+        """
+        Store an encrypted secret.
+        
+        Parameters
+        ----------
+        secret_type : str
+            Type of secret (e.g., 'wg_password', 'openai_key')
+        secret_data : Any
+            Data to encrypt and store
+        """
+        # Convert data to string if it's not already
+        if not isinstance(secret_data, str):
+            secret_data = json.dumps(secret_data)
+
+        # Encrypt and save
+        encrypted_data = self._cipher.encrypt(secret_data.encode())
+        secret_path = self._get_secret_path(secret_type)
+        secret_path.write_bytes(encrypted_data)
+
+    def get_secret(self, secret_type: str) -> Optional[str]:
+        """
+        Retrieve and decrypt a secret.
+        
+        Parameters
+        ----------
+        secret_type : str
+            Type of secret to retrieve
+            
+        Returns
+        -------
+        Optional[str]
+            Decrypted secret if found, None otherwise
+        """
+        secret_path = self._get_secret_path(secret_type)
+
+        if not secret_path.exists():
+            return None
+
+        try:
+            encrypted_data = secret_path.read_bytes()
+            decrypted_data = self._cipher.decrypt(encrypted_data)
+            return decrypted_data.decode()
+        except Exception:
+            return None
+
+    def list_secrets(self) -> list[str]:
+        """List all available secret types."""
+        return [p.stem for p in self.user_dir.glob("*.enc")]
+
+    def delete_secret(self, secret_type: str) -> bool:
+        """
+        Delete a specific secret.
+        
+        Returns
+        -------
+        bool
+            True if secret was deleted, False if it didn't exist
+        """
+        secret_path = self._get_secret_path(secret_type)
+        if secret_path.exists():
+            secret_path.unlink()
+            return True
+        return False
+
+
 class AuthService:
 
     def __init__(
         self,
-        db_service: DatabaseService,
         browser_manager: BrowserManager,
+        db_api_url: str = "http://localhost:7999",
         session_duration: int = 7,
     ):
         """
-        Authentication service for WG-Gesucht and OpenAI.
+        Initialize AuthService with database API connection.
 
         This service handles user authentication, session management, encryption, 
         and secure credential storage.
 
         Parameters
         ----------
-        db_service : DatabaseService
-            Instance of the database service.
         browser_manager : BrowserManager
-            Instance of the browser manager for WG-Gesucht interactions.
-        session_duration : int, optional, default=7
-            Duration of user session in days.
+            Instance of the browser manager.
+        db_api_url : str
+            URL of the database API service.
+        session_duration : int
+            Duration of session in days.
         """
-        self._db_service = db_service
         self._browser_manager = browser_manager
-
-        # Initialize encryption key for sensitive data
-        self._encryption_key = os.getenv('ENCRYPTION_KEY', Fernet.generate_key())
-        self._cipher = Fernet(self._encryption_key)
-
-        # JWT settings
+        self._db_api_url = db_api_url.rstrip('/')
         self._jwt_secret = os.getenv('JWT_SECRET', secrets.token_urlsafe(32))
         self._jwt_algorithm = 'HS256'
         self._session_duration = timedelta(days=session_duration)
+        self._db_client = DatabaseClient(db_api_url=db_api_url)
+
+    def _get_user_vault(self, user_id: str) -> UserVault:
+        """Get or create a vault for the user."""
+        return UserVault(user_id)
 
     def _encrypt_data(self, data: str) -> str:
         """
@@ -155,7 +261,7 @@ class AuthService:
         payload = {'user_id': user_id, 'exp': datetime.utcnow() + self._session_duration}
         return jwt.encode(payload, self._jwt_secret, algorithm=self._jwt_algorithm)
 
-    def _initialize_vault(self, vault_path: Path) -> Fernet:
+    def _initialize_vault(self, key_vault_path: Path) -> Fernet:
         """
         Initialize the encryption vault for a user.
 
@@ -176,13 +282,13 @@ class AuthService:
         bool
             True if the token is valid, False otherwise.
         """
-        if not vault_path.exists():
+        if not key_vault_path.exists():
             # Generate and save a new encryption key if the vault does not exist
             key = Fernet.generate_key()
-            vault_path.write_bytes(key)
+            key_vault_path.write_bytes(key)
         else:
             # Read the existing key from the vault file
-            key = vault_path.read_bytes()
+            key = key_vault_path.read_bytes()
         return Fernet(key)
 
     def _save_to_vault(self, user_id: str, key: str, value: str):
@@ -329,7 +435,137 @@ class AuthService:
         except jwt.InvalidTokenError:
             raise HTTPException(status_code=401, detail="Invalid session token")
 
-    async def authenticate_wg_gesucht(self, credentials: Dict[str, str]) -> AuthResponse:
+    def _get_or_create_user(self, email: str):
+        try:
+            # Try to find existing user
+            result = self._db_client.select(
+                table="users",
+                conditions=f"email = '{email}'",
+            )
+
+            if not result["success"]:
+                raise HTTPException(status_code=500, detail="Database error")
+
+            if not result["data"]:
+                # Get max user ID for new user
+                id_result = self._db_client.select(
+                    table="users",
+                    fields=["id"],
+                )
+
+                # Handle case when there are no users yet
+                if not id_result["data"]:
+                    user_id = "1"
+                else:
+                    user_id = str(max([user["id"] for user in id_result["data"]]) + 1)
+
+                # Create new user
+                user_data = {
+                    "id": user_id,
+                    "email": email,
+                    "created_at": datetime.now().isoformat()
+                }
+                create_result = self._db_client.insert(
+                    table="users",
+                    data=user_data,
+                )
+
+                if not create_result["success"]:
+                    raise HTTPException(status_code=500, detail="Failed to create user")
+            else:
+                user_id = str(result["data"][0]["id"])
+
+            return user_id
+
+        except requests.RequestException as e:
+            raise HTTPException(status_code=500, detail=f"Request failed: {str(e)}")
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
+    def _create_session(self, user_id: int, session_token: str):
+        """
+        Create a new session in the database.
+        
+        Parameters
+        ----------
+        user_id : int
+            The ID of the user for whom to create the session.
+        session_token : str
+            The session token to store.
+            
+        Returns
+        -------
+        dict
+            The result of the database operation.
+            
+        Raises
+        ------
+        HTTPException
+            If the session creation fails.
+        """
+        try:
+            session_data = {
+                "user_id": user_id,
+                "token": session_token,
+                "created_at": datetime.now().isoformat(),
+                "expires_at": (datetime.now() + self._session_duration).isoformat()
+            }
+
+            result = self._db_client.insert(
+                table="sessions",
+                data=session_data,
+            )
+
+            if not result["success"]:
+                raise HTTPException(status_code=500,
+                                    detail=f"Failed to create session: {result.get('error')}")
+            return result
+
+        except requests.RequestException as e:
+            raise HTTPException(status_code=500, detail=f"Request failed: {str(e)}")
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
+    def _get_user_data(self, user_id: str) -> Dict[str, Any]:
+        """
+        Retrieve user data from the database.
+
+        Parameters
+        ----------
+        user_id : str
+            The unique identifier for the user.
+
+        Returns
+        -------
+        Dict[str, Any]
+            Dictionary containing user data.
+
+        Raises
+        ------
+        HTTPException
+            If user is not found or database query fails.
+        """
+        try:
+            result = self._db_client.select(
+                table="users",
+                conditions=f"id = '{user_id}'",
+            )
+
+            if not result["success"]:
+                raise HTTPException(status_code=500,
+                                    detail=f"Database error: {result.get('error')}")
+
+            if not result["data"]:
+                raise HTTPException(status_code=404, detail=f"User with ID {user_id} not found")
+
+            return result["data"][0]
+
+        except requests.RequestException as e:
+            raise HTTPException(status_code=500, detail=f"Request failed: {str(e)}")
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
+    def authenticate_wg_gesucht(self, credentials: Dict[str, str]) -> AuthResponse:
         """
         Authenticate user with WG-Gesucht credentials.
 
@@ -366,58 +602,22 @@ class AuthService:
                 raise HTTPException(status_code=401, detail="Invalid WG-Gesucht credentials")
 
             # Check if user exists in the database
-            result = self._db_service.select(
-                "users",
-                conditions=f"email = '{email}'",
-            )
-
-            if not result["success"]:
-                raise HTTPException(status_code=500, detail="Database error")
-
-            if not result["data"]:
-                # Create new user if it doesn't exist
-                user_id = str(datetime.now().timestamp()).replace(
-                    ".", "")  # Generate a temporary user_id
-                user_data = {"email": email, "created_at": datetime.now()}
-                insert_result = self._db_service.insert("users", user_data)
-                if not insert_result["success"]:
-                    raise HTTPException(
-                        status_code=500,
-                        detail=f"Failed to create user: {insert_result['error']}",
-                    )
-
-                # Retrieve the newly created user
-                result = self._db_service.select(
-                    "users",
-                    conditions=f"email = '{email}'",
-                )
-            else:
-                # User exists, use their ID
-                user_id = str(result["data"][0]["id"])
+            user_id = self._get_or_create_user(email)
 
             # Save WG-Gesucht password to the key vault
-            self._save_to_vault(
-                user_id,
+            # Store credentials in vault
+            vault = self._get_user_vault(user_id)
+            vault.store_secret(
                 "wg_password",
                 password,
             )
 
             # Generate a session token
             session_token = self._generate_session_token(user_id)
-
-            # Store the session token in the database
-            session_data = {
-                "user_id": user_id,
-                "token": session_token,
-                "created_at": datetime.now(),
-                "expires_at": datetime.now() + self._session_duration
-            }
-            session_result = self._db_service.insert("sessions", session_data)
-            if not session_result["success"]:
-                raise HTTPException(
-                    status_code=500,
-                    detail=f"Failed to create session: {session_result['error']}",
-                )
+            session_result = self._create_session(
+                user_id,
+                session_token,
+            )
 
             return AuthResponse(
                 message="Successfully authenticated with WG-Gesucht",
@@ -428,11 +628,13 @@ class AuthService:
         except ValueError as e:
             raise HTTPException(status_code=500, detail=str(e))
         finally:
-            if 'browser' in locals():
-                browser.quit()
+            self._browser_manager.close_user_browser(email)
 
-    async def authenticate_openai(self, session_token: str,
-                                  credentials: OpenAICredentials) -> AuthResponse:
+    def authenticate_openai(
+        self,
+        session_token: str,
+        credentials: OpenAICredentials,
+    ) -> AuthResponse:
         """
         Authenticate and securely store the OpenAI API key for a user.
 
@@ -461,9 +663,9 @@ class AuthService:
             user_id = self.get_user_id(session_token)
 
             # Validate the API key with OpenAI
-            openai.api_key = credentials.api_key
+            openai_client = OpenAI(api_key=credentials.api_key)
             try:
-                openai.Model.list()
+                openai_client.models.list()
             except Exception:
                 raise HTTPException(
                     status_code=401,
@@ -471,27 +673,16 @@ class AuthService:
                 )
 
             # Save the API key securely to the user's key vault
-            self._save_to_vault(
-                user_id,
-                "openai_key",
-                credentials.api_key,
+            vault = self._get_user_vault(user_id)
+            vault.store_secret("openai_key", credentials.api_key)
+
+            return AuthResponse(
+                user_id=user_id,
+                session_token=session_token,
+                message="Successfully stored OpenAI API key",
             )
-
-            # Optionally store metadata in the database if needed
-            update_result = self._db_service.update(
-                "users",
-                {"openai_key": "Stored in key vault"},
-                f"id = '{user_id}'",
-            )
-
-            if not update_result["success"]:
-                raise HTTPException(
-                    status_code=500,
-                    detail="Failed to update OpenAI key metadata in database",
-                )
-
-            return AuthResponse(message="Successfully stored OpenAI API key")
-
+        except HTTPException as e:
+            raise e
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
 
@@ -525,38 +716,23 @@ class AuthService:
         try:
             # Extract user_id from the session token
             user_id = self.get_user_id(session_token)
-
-            # Query the database for user information
-            result = self._db_service.select("users", conditions=f"id = '{user_id}'")
-
-            if not result["success"] or not result["data"]:
-                raise HTTPException(status_code=404, detail="User not found")
-
-            user_data = result["data"][0]
-            credentials = {"email": user_data["email"]}
+            user_data = self._get_user_data(user_id)
 
             # Retrieve WG-Gesucht password from the key vault
-            wg_password = self._load_from_vault(user_id, "wg_password")
-            if wg_password is None:
-                raise HTTPException(
-                    status_code=500,
-                    detail=f"WG-Gesucht password not found in vault for user ID: {user_id}",
-                )
+            vault = self._get_user_vault(user_id)
+            wg_password = vault.get_secret("wg_password")
+            openai_key = vault.get_secret("openai_key")
 
-            # Retrieve OpenAI API key from the key vault
-            openai_key = self._load_from_vault(user_id, "openai_key")
-            if openai_key is None:
-                raise HTTPException(
-                    status_code=500,
-                    detail=f"OpenAI API key not found in vault for user ID: {user_id}",
-                )
+            if not wg_password:
+                # Not providing the openai key is okay if you don't want to use them
+                raise HTTPException(status_code=500, detail="Missing required credentials in vault")
 
-            credentials.update({
+            return {
+                "email": user_data["email"],
                 "wg_password": wg_password,
                 "openai_key": openai_key,
-            })
-
-            return credentials
-
+            }
+        except HTTPException as e:
+            raise e
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))

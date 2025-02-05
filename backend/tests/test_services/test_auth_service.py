@@ -1,166 +1,295 @@
 import pytest
+import os
+import requests
+import subprocess
+import signal
+import time
 from pathlib import Path
-from services.auth_service import AuthService
+from utils import getenv
+from fastapi import HTTPException
+from services.auth_service import AuthService, OpenAICredentials
 from services.database_service import DatabaseService, DBConfig
 from utils.browser_manager import BrowserManager
-from fastapi import HTTPException
-from cryptography.fernet import Fernet
-from typing import Dict
-from datetime import datetime
-import os
+
 
 @pytest.fixture(scope="session")
-def credentials() -> Dict[str, str]:
-    """Fixture to provide database credentials."""
+def wg_credentials() -> dict:
+    """Real WG-Gesucht credentials that work."""
     return {
-        "user": os.getenv("POSTGRES_ROLE"),
-        "password": os.getenv("POSTGRES_PWD"),
+        "email": "amadou.6e@googlemail.com",
+        "password": "SomePassworFrSkrr",
     }
 
+
 @pytest.fixture(scope="session")
-def db_config(credentials: Dict[str, str]) -> DBConfig:
-    """Fixture to create database configuration."""
+def db_config() -> DBConfig:
+    """Database configuration using environment variables."""
     return DBConfig(
         host="localhost",
         port=5432,
         database="postgres",
-        user=credentials["user"],
-        password=credentials["password"],
+        user=os.getenv("POSTGRES_ROLE"),
+        password=os.getenv("POSTGRES_PWD"),
     )
 
+
 @pytest.fixture(scope="session")
-def db_service(db_config: DBConfig) -> DatabaseService:
-    """Fixture to create a long-lived database service instance."""
+def ensure_db_api():
+    """Ensure database API is running and healthy."""
+    api_url = "http://localhost:7999"
+    api_process = None
+
+    try:
+        # First try to connect to existing service
+        response = requests.get(f"{api_url}/health")
+        if response.status_code == 200 and response.json().get("status") == "healthy":
+            yield api_url
+            return
+    except requests.RequestException:
+        # API not running, start it
+        api_process = subprocess.Popen([
+            "python",
+            "-m",
+            "api.v1.database",
+        ], preexec_fn=os.setsid)
+
+        # Wait for API to start (up to 5 seconds)
+        for _ in range(10):
+            try:
+                response = requests.get(f"{api_url}/health")
+                if response.status_code == 200 and response.json().get("status") == "healthy":
+                    break
+            except requests.RequestException:
+                time.sleep(0.5)
+        else:
+            if api_process:
+                os.killpg(os.getpgid(api_process.pid), signal.SIGTERM)
+            pytest.fail("Database API failed to start")
+
+    yield api_url
+
+    # Cleanup: Stop the API if we started it
+    if api_process:
+        os.killpg(os.getpgid(api_process.pid), signal.SIGTERM)
+
+
+@pytest.fixture(scope="session")
+def db_service(db_config) -> DatabaseService:
+    """Create database service instance."""
     return DatabaseService(db_config)
+
 
 @pytest.fixture(scope="session")
 def browser_manager() -> BrowserManager:
-    """Fixture to create a browser manager."""
+    """Create browser manager instance."""
     return BrowserManager()
 
-@pytest.fixture(scope="function")
-def clean_key_vault():
-    """Fixture to clean up the key vault directory using os.system."""
-    key_vault_dir = Path(os.getenv("WORKINGDIR", "."), "data", "users")
 
-    # Clean up before tests
-    if key_vault_dir.exists():
-        os.system(f"rm -rf {key_vault_dir}")
+@pytest.fixture(scope="function")
+def auth_service(
+    browser_manager: BrowserManager,
+    ensure_db_api: str,
+) -> AuthService:
+    """Create auth service instance with database API."""
+    return AuthService(
+        browser_manager=browser_manager,
+        db_api_url=ensure_db_api,
+    )
+
+
+@pytest.fixture(autouse=True)
+def cleanup_database(db_service: DatabaseService):
+    """Clean up test data from database before and after tests."""
+    # Clean up before test
+    db_service.execute_query(
+        "DELETE FROM sessions WHERE user_id IN (SELECT id::text FROM users WHERE email = 'amadou.6e@googlemail.com')"
+    )
+    db_service.execute_query("DELETE FROM users WHERE email = 'amadou.6e@googlemail.com'")
+    db_service.execute_query("DELETE FROM users WHERE email = 'invalid@example.com'")
+    yield
+    # Clean up after test
+    db_service.execute_query(
+        "DELETE FROM sessions WHERE user_id IN (SELECT id::text FROM users WHERE email = 'amadou.6e@googlemail.com')"
+    )
+    db_service.execute_query("DELETE FROM users WHERE email = 'amadou.6e@googlemail.com'")
+    db_service.execute_query("DELETE FROM users WHERE email = 'invalid@example.com'")
+
+
+@pytest.fixture(autouse=True)
+def cleanup_vault_files():
+    """Clean up vault files before and after tests using os.system."""
+    vault_dir = Path(os.getenv("WORKINGDIR", "."), "data", "users")
+
+    if vault_dir.exists():
+        os.system(f"rm -rf {vault_dir}")
 
     yield
 
-    # Clean up again after tests
-    if key_vault_dir.exists():
-        os.system(f"rm -rf {key_vault_dir}")
+    if vault_dir.exists():
+        os.system(f"rm -rf {vault_dir}")
 
-@pytest.fixture(scope="function")
-def auth_service(db_service: DatabaseService, browser_manager: BrowserManager) -> AuthService:
-    """Fixture to create an AuthService instance."""
-    return AuthService(db_service=db_service, browser_manager=browser_manager)
 
-@pytest.mark.asyncio
-async def test_wg_gesucht_authentication(auth_service: AuthService, clean_key_vault, db_service: DatabaseService):
-    """Test authenticating and storing WG-Gesucht credentials."""
-    email = "test@example.com"
-    password = "securepassword"
+def test_wg_gesucht_authentication_flow(
+    auth_service: AuthService,
+    wg_credentials: dict,
+    ensure_db_api: str,
+    db_service: DatabaseService,
+):
+    """Test complete WG-Gesucht authentication flow with real credentials."""
+    # Authenticate with WG-Gesucht
+    response = auth_service.authenticate_wg_gesucht(wg_credentials)
 
-    # Insert test data for user
-    db_service.insert("users", {"email": email, "wg_password": Fernet.generate_key(), "created_at": datetime.now()})
+    assert response.message == "Successfully authenticated with WG-Gesucht"
+    assert response.user_id is not None
+    assert response.session_token is not None
 
-    # Authenticate
-    credentials = {"email": email, "password": password}
-    result = await auth_service.authenticate_wg_gesucht(credentials)
-    assert result.message == "Successfully authenticated with WG-Gesucht"
-    assert result.session_token is not None
+    # Verify user was created in database
+    user_result = db_service.select(
+        "users",
+        conditions=f"email = '{wg_credentials['email']}'",
+    )
+    assert user_result["success"]
+    assert len(user_result["data"]) == 1
 
-    # Verify credentials stored in key vault
-    user_id = str(result.user_id)
-    wg_password = auth_service._load_from_vault(user_id, "wg_password")
-    assert wg_password == password
+    # Verify session was created
+    session_result = db_service.select(
+        "sessions",
+        conditions=f"user_id = '{response.user_id}'",
+    )
+    assert session_result["success"]
+    assert len(session_result["data"]) == 1
 
-def test_openai_key_storage(auth_service: AuthService, clean_key_vault, db_service: DatabaseService):
-    """Test storing OpenAI API keys in the key vault."""
-    user_id = "123"
-    api_key = "sk-test-openai-key"
+    # Verify credentials were stored in vault
+    vault = auth_service._get_user_vault(response.user_id)
+    stored_password = vault.get_secret("wg_password")
+    assert stored_password == wg_credentials["password"]
 
-    # Store API key
-    session_token = auth_service._generate_session_token(user_id)
-    credentials = {"api_key": api_key}
-    result = auth_service.authenticate_openai(session_token, credentials)
-    assert result.message == "Successfully stored OpenAI API key"
 
-    # Verify API key stored in key vault
-    stored_key = auth_service._load_from_vault(user_id, "openai_key")
-    assert stored_key == api_key
+def test_wg_gesucht_authentication_invalid_credentials(
+    auth_service: AuthService,
+    db_service: DatabaseService,
+):
+    """Test WG-Gesucht authentication with invalid credentials."""
 
-def test_retrieve_credentials(auth_service: AuthService, clean_key_vault, db_service: DatabaseService):
-    """Test retrieving stored credentials from the key vault."""
-    user_id = "123"
-    wg_password = "securepassword"
-    openai_key = "sk-test-openai-key"
+    # Define invalid credentials
+    invalid_credentials = {"email": "invalid@example.com", "password": "wrongpassword"}
 
-    # Store credentials in the key vault
-    auth_service._save_to_vault(user_id, "wg_password", wg_password)
-    auth_service._save_to_vault(user_id, "openai_key", openai_key)
-
-    # Retrieve credentials
-    session_token = auth_service._generate_session_token(user_id)
-    credentials = auth_service.get_credentials(session_token)
-    assert credentials["wg_password"] == wg_password
-    assert credentials["openai_key"] == openai_key
-
-def test_invalid_login(auth_service: AuthService, clean_key_vault, browser_manager: BrowserManager):
-    """Test handling of invalid WG-Gesucht credentials."""
-    email = "invalid@example.com"
-    password = "wrongpassword"
-
-    # Simulate invalid login using browser manager
-    browser_manager.get_browser_for_user(email).login = lambda x, y: False
-
+    # Try authenticating with invalid credentials
     with pytest.raises(HTTPException) as exc_info:
-        credentials = {"email": email, "password": password}
-        auth_service.authenticate_wg_gesucht(credentials)
+        auth_service.authenticate_wg_gesucht(invalid_credentials)
+
+    # Assert that the error is a 401 Unauthorized
     assert exc_info.value.status_code == 401
     assert exc_info.value.detail == "Invalid WG-Gesucht credentials"
 
-def test_invalid_openai_key(auth_service: AuthService, clean_key_vault):
-    """Test handling of invalid OpenAI API keys."""
-    user_id = "123"
-    invalid_key = "sk-invalid-key"
-
-    # Mock OpenAI API key validation failure
-    with pytest.raises(HTTPException) as exc_info:
-        session_token = auth_service._generate_session_token(user_id)
-        credentials = {"api_key": invalid_key}
-        auth_service.authenticate_openai(session_token, credentials)
-    assert exc_info.value.status_code == 401
-    assert exc_info.value.detail == "Invalid OpenAI API key"
-
-# if __name__ == "__main__":
-# pytest.main(["-v", __file__])
-if __name__ == "__main__":
-    # Set up database configuration
-    db_config = DBConfig(
-        host="localhost",
-        port=5432,
-        database="postgres",
-        user=os.getenv("POSTGRES_ROLE", "test_user"),
-        password=os.getenv("POSTGRES_PWD", "test_password"),
+    # Ensure no user was created in the database
+    user_result = db_service.select(
+        "users",
+        conditions=f"email = '{invalid_credentials['email']}'",
     )
-    db_service = DatabaseService(db_config)
+    assert user_result["success"]
+    assert len(user_result["data"]) == 0
 
-    # Set up browser manager
-    browser_manager = BrowserManager()
+    # Ensure no session was created
+    session_result = db_service.select(
+        "sessions",
+        conditions=f"user_id = '{invalid_credentials['email']}'",
+    )
+    assert session_result["success"]
+    assert len(session_result["data"]) == 0
 
-    # Set up AuthService
-    auth_service = AuthService(db_service, browser_manager)
-    import shutil
-    import asyncio
-    # Clean key vault directory
-    key_vault_dir = Path(os.getenv("WORKINGDIR", "."), "data", "users")
-    if key_vault_dir.exists():
-        shutil.rmtree(key_vault_dir)
-    key_vault_dir.mkdir(parents=True, exist_ok=True)
 
-    # Manually call the test function
-    asyncio.run(test_wg_gesucht_authentication(auth_service=auth_service, clean_key_vault=None, db_service=db_service))
+def test_openai_integration(
+    auth_service: AuthService,
+    wg_credentials: dict,
+):
+    """Test OpenAI integration after WG-Gesucht authentication."""
+    # First authenticate with WG-Gesucht
+    wg_response = auth_service.authenticate_wg_gesucht(wg_credentials)
+
+    # Test with invalid OpenAI key
+    invalid_key = "sk-invalid123"
+    with pytest.raises(HTTPException) as exc:
+        auth_service.authenticate_openai(
+            wg_response.session_token,
+            OpenAICredentials(api_key=invalid_key),
+        )
+    assert exc.value.status_code == 401
+    assert "Invalid OpenAI API key" in str(exc.value.detail)
+
+    # Test with valid OpenAI key (if available)
+    openai_key = os.getenv("OPENAI_API_KEY")
+    if openai_key:
+        response = auth_service.authenticate_openai(
+            wg_response.session_token,
+            OpenAICredentials(api_key=openai_key),
+        )
+        assert response.message == "Successfully stored OpenAI API key"
+
+        # Verify OpenAI key storage
+        vault = auth_service._get_user_vault(wg_response.user_id)
+        stored_key = vault.get_secret("openai_key")
+        assert stored_key == openai_key
+
+
+def test_credential_retrieval(
+    auth_service: AuthService,
+    wg_credentials: dict,
+):
+    """Test retrieving stored credentials."""
+    # Set up authentication first
+    wg_response = auth_service.authenticate_wg_gesucht(wg_credentials,)
+
+    # Add OpenAI key if available
+    openai_key = getenv("OPENAI_API_KEY")
+    openai_response = auth_service.authenticate_openai(
+        wg_response.session_token,
+        OpenAICredentials(api_key=openai_key),
+    )
+
+    # Retrieve credentials
+    stored_creds = auth_service.get_credentials(wg_response.session_token,)
+
+    # Verify retrieved credentials
+    assert stored_creds["email"] == wg_credentials["email"]
+    assert stored_creds["wg_password"] == wg_credentials["password"]
+    if openai_key:
+        assert stored_creds["openai_key"] == openai_key
+
+
+def test_session_management(
+    auth_service: AuthService,
+    wg_credentials: dict,
+    db_service: DatabaseService,
+):
+    """Test session token management and validation."""
+    # test random token
+    assert auth_service.validate_session_token("invalid-token") is False
+
+    # Create initial session
+    response1 = auth_service.authenticate_wg_gesucht(wg_credentials,)
+    token1 = response1.session_token
+
+    # Validate the token
+    assert auth_service.validate_session_token(token1) is True
+    assert auth_service.get_user_id(token1) == response1.user_id
+
+    # Create second session
+    response2 = auth_service.authenticate_wg_gesucht(wg_credentials)
+    token2 = response2.session_token
+
+    # Verify tokens are different but valid
+    assert token1 != token2
+    assert auth_service.validate_session_token(token2) is True
+    assert auth_service.get_user_id(token2) == response2.user_id
+
+    # Verify both sessions exist in database
+    sessions = db_service.select(
+        "sessions",
+        conditions=f"user_id = '{response1.user_id}'",
+    )
+    assert len(sessions["data"]) == 2
+
+
+if __name__ == "__main__":
+    pytest.main(["-v", __file__])

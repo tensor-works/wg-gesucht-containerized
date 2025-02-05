@@ -16,3 +16,4 @@ yapf
 psycopg2-binary
 PyJWT
 pydantic[email]
+pytest-asyncio

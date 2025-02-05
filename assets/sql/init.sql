@@ -14,20 +14,25 @@ ALTER ROLE ${POSTGRES_ROLE} WITH SUPERUSER;
 -- Create tables
 CREATE TABLE IF NOT EXISTS users (
     id SERIAL PRIMARY KEY,
-    address_id INT,
-    name VARCHAR(100),
-    surname VARCHAR(100),
+    first_name VARCHAR(100),
+    last_name VARCHAR(100),
     email VARCHAR(150) UNIQUE,
     photo_path VARCHAR(255) DEFAULT NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE TABLE IF NOT EXISTS addresses (
-    id SERIAL PRIMARY KEY,
     city VARCHAR(100),
+    profile_photo VARCHAR(255),
     postal_code VARCHAR(10),
     street_and_house_number VARCHAR(255),
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+
+CREATE TABLE IF NOT EXISTS sessions (
+    id SERIAL PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    token TEXT UNIQUE NOT NULL,
+    created_at TIMESTAMP DEFAULT NOW(),
+    expires_at TIMESTAMP NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS searches (

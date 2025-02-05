@@ -1,14 +1,20 @@
 import os
+from utils import getenv
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
 from services.database_service import DatabaseService, DBConfig
+from dotenv import load_dotenv
+
+load_dotenv()
+
 
 # Pydantic models for request/response validation
 class QueryRequest(BaseModel):
     """Model for raw SQL query requests."""
     query: str
     params: Optional[tuple] = None
+
 
 class TableOperationRequest(BaseModel):
     """Model for table operations."""
@@ -17,10 +23,12 @@ class TableOperationRequest(BaseModel):
     conditions: Optional[str] = None
     fields: Optional[List[str]] = None
 
+
 class BulkInsertRequest(BaseModel):
     """Model for bulk insert operations."""
     table: str
     data: List[Dict[str, Any]]
+
 
 # Initialize FastAPI
 app = FastAPI(title="Database Service API")
@@ -30,11 +38,12 @@ db_config = DBConfig(
     host="localhost",
     port=5432,
     database="postgres",
-    user=os.getenv("POSTGRES_ROLE"),
-    password=os.getenv("POSTGRES_PWD")
+    user=getenv("POSTGRES_ROLE"),
+    password=getenv("POSTGRES_PWD"),
 )
 
 db_service = DatabaseService(db_config)
+
 
 @app.get("/health")
 async def health_check():
@@ -47,6 +56,7 @@ async def health_check():
     except Exception as e:
         return {"status": "unhealthy", "database": "error", "details": str(e)}
 
+
 @app.post("/query")
 async def execute_query(request: QueryRequest):
     """Execute raw SQL query."""
@@ -54,6 +64,7 @@ async def execute_query(request: QueryRequest):
     if not result["success"]:
         raise HTTPException(status_code=400, detail=result["error"])
     return result
+
 
 @app.post("/insert")
 async def insert_data(request: TableOperationRequest):
@@ -63,6 +74,7 @@ async def insert_data(request: TableOperationRequest):
         raise HTTPException(status_code=400, detail=result["error"])
     return result
 
+
 @app.post("/bulk-insert")
 async def bulk_insert_data(request: BulkInsertRequest):
     """Bulk insert data into a table."""
@@ -70,6 +82,7 @@ async def bulk_insert_data(request: BulkInsertRequest):
     if not result["success"]:
         raise HTTPException(status_code=400, detail=result["error"])
     return result
+
 
 @app.get("/select")
 async def select_data(table: str, conditions: Optional[str] = None, fields: Optional[str] = None):
@@ -79,6 +92,7 @@ async def select_data(table: str, conditions: Optional[str] = None, fields: Opti
     if not result["success"]:
         raise HTTPException(status_code=400, detail=result["error"])
     return result
+
 
 @app.put("/update")
 async def update_data(request: TableOperationRequest):
@@ -90,6 +104,7 @@ async def update_data(request: TableOperationRequest):
         raise HTTPException(status_code=400, detail=result["error"])
     return result
 
+
 @app.delete("/delete")
 async def delete_data(table: str, conditions: str):
     """Delete data from a table."""
@@ -99,6 +114,7 @@ async def delete_data(table: str, conditions: str):
     if not result["success"]:
         raise HTTPException(status_code=400, detail=result["error"])
     return result
+
 
 if __name__ == "__main__":
     import uvicorn
